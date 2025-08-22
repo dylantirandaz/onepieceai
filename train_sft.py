@@ -80,6 +80,10 @@ eval_kw = (
     else {"evaluation_strategy": "steps"}
 )
 
+# If using SFTConfig and you manually set evaluation_strategy below, clear eval_kw to prevent duplication
+if HAS_SFTCONFIG:
+    eval_kw = {}
+
 if HAS_SFTCONFIG:
     args = SFTConfig(
         output_dir=OUTPUT_DIR,
@@ -88,23 +92,18 @@ if HAS_SFTCONFIG:
         gradient_accumulation_steps=GRAD_ACCUM,
         learning_rate=LR,
         num_train_epochs=EPOCHS,
-        logging_steps=50,
-        eval_steps=1000,
-        save_steps=1000,
-        save_total_limit=3,
         bf16=BF16,
         fp16=FP16,
         optim="paged_adamw_8bit" if CUDA else "adamw_torch",
-        gradient_checkpointing=True,
+        gradient_checkpointing=False,  
         report_to="none",
         max_grad_norm=1.0,
-        ##sft-specific
         dataset_text_field="text",
         max_length=MAX_LEN,
         packing=False,
         dataloader_num_workers=4,
-        evaluation_strategy="no",  
-        save_steps=0,              
+        evaluation_strategy="no",   
+        save_steps=0,
         logging_steps=10,
         **eval_kw,
     )
@@ -116,17 +115,16 @@ else:
         gradient_accumulation_steps=GRAD_ACCUM,
         learning_rate=LR,
         num_train_epochs=EPOCHS,
-        logging_steps=50,
-        eval_steps=1000,
-        save_steps=1000,
-        save_total_limit=3,
+        logging_steps=10,
+        save_steps=0,
+        evaluation_strategy="no" if "evaluation_strategy" in signature(TrainingArguments.__init__).parameters else None,
         bf16=BF16,
         fp16=FP16,
         optim="paged_adamw_8bit" if CUDA else "adamw_torch",
-        gradient_checkpointing=True,
+        gradient_checkpointing=False,
         report_to="none",
         max_grad_norm=1.0,
-        **eval_kw,
+        **({} if "evaluation_strategy" in signature(TrainingArguments.__init__).parameters else eval_kw),
     )
 
 sft_kwargs = {}
