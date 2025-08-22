@@ -80,12 +80,18 @@ eval_kw = (
     else {"evaluation_strategy": "steps"}
 )
 
-# If using SFTConfig and you manually set evaluation_strategy below, clear eval_kw to prevent duplication
 if HAS_SFTCONFIG:
     eval_kw = {}
 
 if HAS_SFTCONFIG:
-    args = SFTConfig(
+    sft_sig = signature(SFTConfig.__init__).parameters
+    eval_arg_name = None
+    if "eval_strategy" in sft_sig:
+        eval_arg_name = "eval_strategy"
+    elif "evaluation_strategy" in sft_sig:
+        eval_arg_name = "evaluation_strategy"
+
+    sftconfig_kwargs = dict(
         output_dir=OUTPUT_DIR,
         per_device_train_batch_size=BATCH_SIZE,
         per_device_eval_batch_size=BATCH_SIZE,
@@ -95,18 +101,20 @@ if HAS_SFTCONFIG:
         bf16=BF16,
         fp16=FP16,
         optim="paged_adamw_8bit" if CUDA else "adamw_torch",
-        gradient_checkpointing=False,  
+        gradient_checkpointing=False,
         report_to="none",
         max_grad_norm=1.0,
         dataset_text_field="text",
         max_length=MAX_LEN,
         packing=False,
         dataloader_num_workers=4,
-        evaluation_strategy="no",   
         save_steps=0,
         logging_steps=10,
-        **eval_kw,
     )
+    if eval_arg_name:
+        sftconfig_kwargs[eval_arg_name] = "no"
+
+    args = SFTConfig(**sftconfig_kwargs)
 else:
     args = TrainingArguments(
         output_dir=OUTPUT_DIR,
@@ -117,14 +125,17 @@ else:
         num_train_epochs=EPOCHS,
         logging_steps=10,
         save_steps=0,
-        evaluation_strategy="no" if "evaluation_strategy" in signature(TrainingArguments.__init__).parameters else None,
+        **(
+            {"eval_strategy": "no"}
+            if "eval_strategy" in signature(TrainingArguments.__init__).parameters
+            else {"evaluation_strategy": "no"}
+        ),
         bf16=BF16,
         fp16=FP16,
         optim="paged_adamw_8bit" if CUDA else "adamw_torch",
         gradient_checkpointing=False,
         report_to="none",
         max_grad_norm=1.0,
-        **({} if "evaluation_strategy" in signature(TrainingArguments.__init__).parameters else eval_kw),
     )
 
 sft_kwargs = {}
