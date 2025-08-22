@@ -8,6 +8,8 @@ import torch
 from transformers import BitsAndBytesConfig
 from inspect import signature
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 try:
     from trl import SFTConfig
     HAS_SFTCONFIG = True
@@ -83,90 +85,94 @@ eval_kw = (
 if HAS_SFTCONFIG:
     eval_kw = {}
 
-if HAS_SFTCONFIG:
-    sft_sig = signature(SFTConfig.__init__).parameters
-    eval_arg_name = None
-    if "eval_strategy" in sft_sig:
-        eval_arg_name = "eval_strategy"
-    elif "evaluation_strategy" in sft_sig:
-        eval_arg_name = "evaluation_strategy"
+def main():
+    if HAS_SFTCONFIG:
+        sft_sig = signature(SFTConfig.__init__).parameters
+        eval_arg_name = None
+        if "eval_strategy" in sft_sig:
+            eval_arg_name = "eval_strategy"
+        elif "evaluation_strategy" in sft_sig:
+            eval_arg_name = "evaluation_strategy"
 
-    sftconfig_kwargs = dict(
-        output_dir=OUTPUT_DIR,
-        per_device_train_batch_size=BATCH_SIZE,
-        per_device_eval_batch_size=BATCH_SIZE,
-        gradient_accumulation_steps=GRAD_ACCUM,
-        learning_rate=LR,
-        num_train_epochs=EPOCHS,
-        bf16=BF16,
-        fp16=FP16,
-        optim="paged_adamw_8bit" if CUDA else "adamw_torch",
-        gradient_checkpointing=False,
-        report_to="none",
-        max_grad_norm=1.0,
-        dataset_text_field="text",
-        max_length=MAX_LEN,
-        packing=False,
-        dataloader_num_workers=4,
-        save_steps=0,
-        logging_steps=10,
+        sftconfig_kwargs = dict(
+            output_dir=OUTPUT_DIR,
+            per_device_train_batch_size=BATCH_SIZE,
+            per_device_eval_batch_size=BATCH_SIZE,
+            gradient_accumulation_steps=GRAD_ACCUM,
+            learning_rate=LR,
+            num_train_epochs=EPOCHS,
+            bf16=BF16,
+            fp16=FP16,
+            optim="paged_adamw_8bit" if CUDA else "adamw_torch",
+            gradient_checkpointing=False,
+            report_to="none",
+            max_grad_norm=1.0,
+            dataset_text_field="text",
+            max_length=MAX_LEN,
+            packing=False,
+            dataloader_num_workers=0,   
+            save_steps=0,
+            logging_steps=10,
+        )
+        if eval_arg_name:
+            sftconfig_kwargs[eval_arg_name] = "no"
+
+        args = SFTConfig(**sftconfig_kwargs)
+    else:
+        args = TrainingArguments(
+            output_dir=OUTPUT_DIR,
+            per_device_train_batch_size=BATCH_SIZE,
+            per_device_eval_batch_size=BATCH_SIZE,
+            gradient_accumulation_steps=GRAD_ACCUM,
+            learning_rate=LR,
+            num_train_epochs=EPOCHS,
+            logging_steps=10,
+            save_steps=0,
+            **(
+                {"eval_strategy": "no"}
+                if "eval_strategy" in signature(TrainingArguments.__init__).parameters
+                else {"evaluation_strategy": "no"}
+            ),
+            bf16=BF16,
+            fp16=FP16,
+            optim="paged_adamw_8bit" if CUDA else "adamw_torch",
+            gradient_checkpointing=False,
+            report_to="none",
+            max_grad_norm=1.0,
+        )
+
+    sft_kwargs = {}
+    sft_params = signature(SFTTrainer.__init__).parameters
+    if "processing_class" in sft_params:
+        sft_kwargs["processing_class"] = tokenizer
+    elif "tokenizer" in sft_params:
+        sft_kwargs["tokenizer"] = tokenizer
+
+    trainer_kwargs = dict(
+        model=model,
+        train_dataset=train_ds,
+        eval_dataset=val_ds,
+        args=args,
+        **sft_kwargs,
     )
-    if eval_arg_name:
-        sftconfig_kwargs[eval_arg_name] = "no"
 
-    args = SFTConfig(**sftconfig_kwargs)
-else:
-    args = TrainingArguments(
-        output_dir=OUTPUT_DIR,
-        per_device_train_batch_size=BATCH_SIZE,
-        per_device_eval_batch_size=BATCH_SIZE,
-        gradient_accumulation_steps=GRAD_ACCUM,
-        learning_rate=LR,
-        num_train_epochs=EPOCHS,
-        logging_steps=10,
-        save_steps=0,
-        **(
-            {"eval_strategy": "no"}
-            if "eval_strategy" in signature(TrainingArguments.__init__).parameters
-            else {"evaluation_strategy": "no"}
-        ),
-        bf16=BF16,
-        fp16=FP16,
-        optim="paged_adamw_8bit" if CUDA else "adamw_torch",
-        gradient_checkpointing=False,
-        report_to="none",
-        max_grad_norm=1.0,
-    )
+    if not HAS_SFTCONFIG:
+        if "max_seq_length" in sft_params:
+            trainer_kwargs["max_seq_length"] = MAX_LEN
+        if "packing" in sft_params:
+            trainer_kwargs["packing"] = False
+        if "formatting_func" in sft_params:
+            def _fmt(ex): return ex["text"]
+            trainer_kwargs["formatting_func"] = _fmt
+        elif "dataset_text_field" in sft_params:
+            trainer_kwargs["dataset_text_field"] = "text"
 
-sft_kwargs = {}
-sft_params = signature(SFTTrainer.__init__).parameters
-if "processing_class" in sft_params:
-    sft_kwargs["processing_class"] = tokenizer
-elif "tokenizer" in sft_params:
-    sft_kwargs["tokenizer"] = tokenizer
+    trainer = SFTTrainer(**trainer_kwargs)
 
-trainer_kwargs = dict(
-    model=model,
-    train_dataset=train_ds,
-    eval_dataset=val_ds,
-    args=args,
-    **sft_kwargs,
-)
+    trainer.train()
+    trainer.save_model(OUTPUT_DIR)
+    tokenizer.save_pretrained(OUTPUT_DIR)
+    print("Done. Adapter saved to:", OUTPUT_DIR)
 
-if not HAS_SFTCONFIG:
-    if "max_seq_length" in sft_params:
-        trainer_kwargs["max_seq_length"] = MAX_LEN
-    if "packing" in sft_params:
-        trainer_kwargs["packing"] = False
-    if "formatting_func" in sft_params:
-        def _fmt(ex): return ex["text"]
-        trainer_kwargs["formatting_func"] = _fmt
-    elif "dataset_text_field" in sft_params:
-        trainer_kwargs["dataset_text_field"] = "text"
-
-trainer = SFTTrainer(**trainer_kwargs)
-
-trainer.train()
-trainer.save_model(OUTPUT_DIR)
-tokenizer.save_pretrained(OUTPUT_DIR)
-print("Done. Adapter saved to:", OUTPUT_DIR)
+if __name__ == "__main__":
+    main()
