@@ -2,7 +2,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 import torch, json
 
-BASE = "Qwen/Qwen2.5-7B-Instruct"
+BASE = "Qwen/Qwen2.5-1.5B-Instruct"
 ADAPTER = "checkpoints/op-next"
 
 tok = AutoTokenizer.from_pretrained(BASE)
