@@ -1,10 +1,8 @@
-import json, os
+import json, os, torch
 from dataclasses import dataclass
-from datasets import load_dataset
 from transformers import (AutoTokenizer, AutoModelForCausalLM, TrainingArguments)
 from peft import LoraConfig, get_peft_model, TaskType
 from trl import SFTTrainer
-import torch
 from transformers import BitsAndBytesConfig
 from inspect import signature
 
@@ -22,8 +20,8 @@ FP16 = CUDA and not BF16
 DTYPE = torch.bfloat16 if BF16 else (torch.float16 if FP16 else torch.float32)
 
 MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"  
-TRAIN_FILE = "out_train/multitask_mix.train.jsonl"
-VAL_FILE   = "out_train/multitask_mix.val.jsonl"
+TRAIN_FILE = "out_train/train_next_beats.train.jsonl"
+VAL_FILE   = "out_train/train_next_beats.val.jsonl"
 OUTPUT_DIR = "checkpoints/op-next"
 MAX_LEN = 512        
 BATCH_SIZE = 4       
@@ -37,6 +35,7 @@ if tokenizer.pad_token is None:
 tokenizer.padding_side = "right"
 
 def ds_from_jsonl(path):
+    from datasets import load_dataset
     return load_dataset("json", data_files=path, split="train")
 
 train_ds = ds_from_jsonl(TRAIN_FILE)
@@ -68,7 +67,7 @@ model = AutoModelForCausalLM.from_pretrained(
 
 peft_cfg = LoraConfig(
     task_type=TaskType.CAUSAL_LM,
-    r=8, lora_alpha=16, lora_dropout=0.05,  #fewer trainable params
+    r=8, lora_alpha=16, lora_dropout=0.05,  
     target_modules=["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"]
 )
 model = get_peft_model(model, peft_cfg)
